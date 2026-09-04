@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import "./App.css";
 
-const API = "http://localhost:5000";
+const API = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 function App() {
   const [loggedIn, setLoggedIn] = useState(false);
@@ -15,6 +15,31 @@ function App() {
   const [previousData, setPreviousData] = useState({});
   const [loading, setLoading] = useState({});
   const [authLoading, setAuthLoading] = useState(false);
+  const [restoring, setRestoring] = useState(true);
+
+  // Restore session from localStorage on first load
+  useEffect(() => {
+    const saved = localStorage.getItem("watchlist_user");
+
+    if (saved) {
+      try {
+        const user = JSON.parse(saved);
+
+        if (user && user.id && user.name) {
+          setUserId(user.id);
+          setUserName(user.name);
+          setLoggedIn(true);
+          loadWatchlist(user.id);
+        }
+      } catch (error) {
+        console.error("Session restore error:", error);
+        localStorage.removeItem("watchlist_user");
+      }
+    }
+
+    setRestoring(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function login() {
     const name = loginName.trim();
@@ -54,6 +79,11 @@ function App() {
       setLoggedIn(true);
       setLoginName("");
 
+      localStorage.setItem(
+        "watchlist_user",
+        JSON.stringify({ id: user.id, name: user.name })
+      );
+
       await loadWatchlist(user.id);
     } catch (error) {
       console.error("Login error:", error);
@@ -79,9 +109,10 @@ function App() {
       setMarketData({});
       setPreviousData({});
 
-      for (const item of watchlist) {
-        await fetchMarketData(item.symbol, id);
-      }
+      // Fetch all symbols in parallel instead of one at a time
+      await Promise.all(
+        watchlist.map((item) => fetchMarketData(item.symbol, id))
+      );
     } catch (error) {
       console.error("Load watchlist error:", error);
       alert("Could not load your watchlist.");
@@ -313,6 +344,8 @@ function App() {
   }
 
   function logout() {
+    localStorage.removeItem("watchlist_user");
+
     setLoggedIn(false);
     setUserId(null);
     setUserName("");
@@ -359,6 +392,8 @@ function App() {
     };
   }
 
+  // A stock only counts as "meaningfully changed" if it moved
+  // at least 2% since the user's last visit (see README).
   const changedStocks = stocks.filter((item) => {
     const change = getVisitChange(item.symbol);
 
@@ -377,6 +412,17 @@ function App() {
     (item) =>
       getVisitChange(item.symbol)?.percentage < 0
   );
+
+  // Avoid flashing the login screen while we check localStorage
+  if (restoring) {
+    return (
+      <div className="app">
+        <main className="login-page">
+          <p>Loading...</p>
+        </main>
+      </div>
+    );
+  }
 
   if (!loggedIn) {
     return (
@@ -674,7 +720,7 @@ function App() {
                         </span>
 
                         <span className="stock-source">
-                          NSE
+                          {data?.exchange || "NSE"}
                         </span>
                       </div>
 

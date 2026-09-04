@@ -364,7 +364,7 @@ function App() {
 
     return (
       change &&
-      Math.abs(change.percentage) > 0.001
+      Math.abs(change.percentage) >= 2
     );
   });
 

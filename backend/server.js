@@ -3,7 +3,7 @@ const cors = require("cors");
 const pool = require("./db");
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 app.use(
   cors({
@@ -475,7 +475,7 @@ app.get(
 
 const server = app.listen(
   PORT,
-  "127.0.0.1",
+  "0.0.0.0",
   () => {
     console.log("");
     console.log(
@@ -483,7 +483,7 @@ const server = app.listen(
     );
     console.log("Market Watchlist Backend");
     console.log(
-      `Running on http://127.0.0.1:${PORT}`
+      `Running on port ${PORT}`
     );
     console.log(
       "======================================"

@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 5000;
 const allowedOrigins = [
   "http://localhost:5173",
   "http://127.0.0.1:5173",
-  "https://market-watchlist-39a.onrender.com"
+  "https://market-watchlist-3j9e.onrender.com"
 ];
 
 if (process.env.FRONTEND_URL) {

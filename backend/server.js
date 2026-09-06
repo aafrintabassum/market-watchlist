@@ -3,36 +3,33 @@ const cors = require("cors");
 const pool = require("./db");
 
 const app = express();
+
 const PORT = process.env.PORT || 5000;
+
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "https://market-watchlist-39a.onrender.com"
+];
+
+if (process.env.FRONTEND_URL) {
+  allowedOrigins.push(process.env.FRONTEND_URL);
+}
 
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173",
-      "http://127.0.0.1:5173",
-      "https://market-watchlistt.netlify.app",
-    ],
+    origin: allowedOrigins
   })
 );
 
 app.use(express.json());
 
-
-// ==============================
-// HEALTH CHECK
-// ==============================
-
 app.get("/", (req, res) => {
   res.json({
     success: true,
-    message: "Market Watchlist backend is running",
+    message: "Market Watchlist backend is running"
   });
 });
-
-
-// ==============================
-// LOGIN
-// ==============================
 
 app.post("/api/auth/login", async (req, res) => {
   try {
@@ -41,14 +38,14 @@ app.post("/api/auth/login", async (req, res) => {
     if (!name) {
       return res.status(400).json({
         success: false,
-        message: "Name is required",
+        message: "Name is required"
       });
     }
 
     if (name.length < 2 || name.length > 100) {
       return res.status(400).json({
         success: false,
-        message: "Please enter a valid name",
+        message: "Please enter a valid name"
       });
     }
 
@@ -67,7 +64,7 @@ app.post("/api/auth/login", async (req, res) => {
       return res.json({
         success: true,
         message: "Login successful",
-        user: existingUser.rows[0],
+        user: existingUser.rows[0]
       });
     }
 
@@ -83,22 +80,17 @@ app.post("/api/auth/login", async (req, res) => {
     return res.status(201).json({
       success: true,
       message: "Account created",
-      user: createdUser.rows[0],
+      user: createdUser.rows[0]
     });
   } catch (error) {
     console.error("LOGIN ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Could not log in",
+      message: "Could not log in"
     });
   }
 });
-
-
-// ==============================
-// GET WATCHLIST
-// ==============================
 
 app.get("/api/watchlist/:userId", async (req, res) => {
   try {
@@ -107,7 +99,7 @@ app.get("/api/watchlist/:userId", async (req, res) => {
     if (!Number.isInteger(userId) || userId <= 0) {
       return res.status(400).json({
         success: false,
-        message: "Invalid user ID",
+        message: "Invalid user ID"
       });
     }
 
@@ -123,22 +115,17 @@ app.get("/api/watchlist/:userId", async (req, res) => {
 
     res.json({
       success: true,
-      watchlist: result.rows,
+      watchlist: result.rows
     });
   } catch (error) {
     console.error("WATCHLIST FETCH ERROR:", error);
 
     res.status(500).json({
       success: false,
-      message: "Could not load watchlist",
+      message: "Could not load watchlist"
     });
   }
 });
-
-
-// ==============================
-// ADD STOCK
-// ==============================
 
 app.post("/api/watchlist/:userId", async (req, res) => {
   try {
@@ -151,21 +138,21 @@ app.post("/api/watchlist/:userId", async (req, res) => {
     if (!Number.isInteger(userId) || userId <= 0) {
       return res.status(400).json({
         success: false,
-        message: "Invalid user ID",
+        message: "Invalid user ID"
       });
     }
 
     if (!symbol) {
       return res.status(400).json({
         success: false,
-        message: "Stock symbol is required",
+        message: "Stock symbol is required"
       });
     }
 
     if (!/^[A-Z0-9.-]{1,20}$/.test(symbol)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid stock symbol",
+        message: "Invalid stock symbol"
       });
     }
 
@@ -182,7 +169,7 @@ app.post("/api/watchlist/:userId", async (req, res) => {
     if (userResult.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "User not found",
+        message: "User not found"
       });
     }
 
@@ -200,7 +187,7 @@ app.post("/api/watchlist/:userId", async (req, res) => {
     if (existing.rows.length > 0) {
       return res.status(409).json({
         success: false,
-        message: `${symbol} is already in your watchlist`,
+        message: `${symbol} is already in your watchlist`
       });
     }
 
@@ -215,22 +202,17 @@ app.post("/api/watchlist/:userId", async (req, res) => {
 
     res.status(201).json({
       success: true,
-      watchlist: result.rows[0],
+      watchlist: result.rows[0]
     });
   } catch (error) {
     console.error("ADD STOCK ERROR:", error);
 
     res.status(500).json({
       success: false,
-      message: "Could not add stock",
+      message: "Could not add stock"
     });
   }
 });
-
-
-// ==============================
-// REMOVE STOCK
-// ==============================
 
 app.delete("/api/watchlist/:userId/:symbol", async (req, res) => {
   try {
@@ -243,14 +225,14 @@ app.delete("/api/watchlist/:userId/:symbol", async (req, res) => {
     if (!Number.isInteger(userId) || userId <= 0) {
       return res.status(400).json({
         success: false,
-        message: "Invalid user ID",
+        message: "Invalid user ID"
       });
     }
 
     if (!symbol) {
       return res.status(400).json({
         success: false,
-        message: "Stock symbol is required",
+        message: "Stock symbol is required"
       });
     }
 
@@ -267,28 +249,23 @@ app.delete("/api/watchlist/:userId/:symbol", async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(404).json({
         success: false,
-        message: "Stock not found",
+        message: "Stock not found"
       });
     }
 
     res.json({
       success: true,
-      message: `${symbol} removed`,
+      message: `${symbol} removed`
     });
   } catch (error) {
     console.error("REMOVE STOCK ERROR:", error);
 
     res.status(500).json({
       success: false,
-      message: "Could not remove stock",
+      message: "Could not remove stock"
     });
   }
 });
-
-
-// ==============================
-// MARKET DATA
-// ==============================
 
 app.get("/api/market/:symbol", async (req, res) => {
   try {
@@ -299,14 +276,14 @@ app.get("/api/market/:symbol", async (req, res) => {
     if (!symbol) {
       return res.status(400).json({
         success: false,
-        message: "Stock symbol is required",
+        message: "Stock symbol is required"
       });
     }
 
     if (!/^[A-Z0-9.-]{1,20}$/.test(symbol)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid stock symbol",
+        message: "Invalid stock symbol"
       });
     }
 
@@ -314,52 +291,33 @@ app.get("/api/market/:symbol", async (req, res) => {
       ? symbol
       : `${symbol}.NS`;
 
-    const yahooUrls = [
-      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-        yahooSymbol
-      )}?range=2d&interval=1d`,
-      `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
-        yahooSymbol
-      )}?range=2d&interval=1d`,
-    ];
+    const url =
+      `https://query1.finance.yahoo.com/v8/finance/chart/` +
+      `${encodeURIComponent(yahooSymbol)}?range=2d&interval=1d`;
 
-    let response = null;
+    const controller = new AbortController();
 
-    for (const url of yahooUrls) {
-      const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, 10000);
 
-      const timeout = setTimeout(() => {
-        controller.abort();
-      }, 15000);
+    let response;
 
-      try {
-        response = await fetch(url, {
-          signal: controller.signal,
-          headers: {
-            "User-Agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
-            Accept: "application/json,text/plain,*/*",
-          },
-        });
-
-        if (response.ok) {
-          break;
+    try {
+      response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "Market-Watchlist/1.0"
         }
-
-        console.error(
-          `Yahoo request failed: ${response.status} ${response.statusText}`
-        );
-      } catch (error) {
-        console.error("Yahoo request error:", error.message);
-      } finally {
-        clearTimeout(timeout);
-      }
+      });
+    } finally {
+      clearTimeout(timeout);
     }
 
-    if (!response || !response.ok) {
-      return res.status(503).json({
+    if (!response.ok) {
+      return res.status(404).json({
         success: false,
-        message: `Market data temporarily unavailable for ${symbol}`,
+        message: `Market data not found for ${symbol}`
       });
     }
 
@@ -370,7 +328,7 @@ app.get("/api/market/:symbol", async (req, res) => {
     if (!result) {
       return res.status(404).json({
         success: false,
-        message: `No market data available for ${symbol}`,
+        message: `No market data available for ${symbol}`
       });
     }
 
@@ -390,7 +348,7 @@ app.get("/api/market/:symbol", async (req, res) => {
     if (!Number.isFinite(price)) {
       return res.status(404).json({
         success: false,
-        message: `Could not get price for ${symbol}`,
+        message: `Could not get price for ${symbol}`
       });
     }
 
@@ -403,22 +361,17 @@ app.get("/api/market/:symbol", async (req, res) => {
       exchange: meta.exchangeName || "NSE",
       marketState: meta.marketState || "UNKNOWN",
       source: "Yahoo Finance",
-      fetchedAt: new Date().toISOString(),
+      fetchedAt: new Date().toISOString()
     });
   } catch (error) {
     console.error("MARKET DATA ERROR:", error);
 
     res.status(503).json({
       success: false,
-      message: "Market data is temporarily unavailable",
+      message: "Market data is temporarily unavailable"
     });
   }
 });
-
-
-// ==============================
-// SAVE MARKET SNAPSHOT
-// ==============================
 
 app.post("/api/snapshots/:userId", async (req, res) => {
   try {
@@ -437,14 +390,14 @@ app.post("/api/snapshots/:userId", async (req, res) => {
     if (!Number.isInteger(userId) || userId <= 0) {
       return res.status(400).json({
         success: false,
-        message: "Invalid user ID",
+        message: "Invalid user ID"
       });
     }
 
     if (!symbol || !Number.isFinite(price)) {
       return res.status(400).json({
         success: false,
-        message: "Invalid snapshot data",
+        message: "Invalid snapshot data"
       });
     }
 
@@ -462,28 +415,23 @@ app.post("/api/snapshots/:userId", async (req, res) => {
         price,
         Number.isFinite(previousClose)
           ? previousClose
-          : null,
+          : null
       ]
     );
 
     res.status(201).json({
       success: true,
-      snapshot: result.rows[0],
+      snapshot: result.rows[0]
     });
   } catch (error) {
     console.error("SNAPSHOT SAVE ERROR:", error);
 
     res.status(500).json({
       success: false,
-      message: "Could not save market snapshot",
+      message: "Could not save market snapshot"
     });
   }
 });
-
-
-// ==============================
-// GET PREVIOUS SNAPSHOT
-// ==============================
 
 app.get(
   "/api/snapshots/:userId/:symbol/previous",
@@ -498,7 +446,7 @@ app.get(
       if (!Number.isInteger(userId) || userId <= 0) {
         return res.status(400).json({
           success: false,
-          message: "Invalid user ID",
+          message: "Invalid user ID"
         });
       }
 
@@ -520,7 +468,7 @@ app.get(
         previous:
           result.rows.length > 0
             ? result.rows[0]
-            : null,
+            : null
       });
     } catch (error) {
       console.error(
@@ -530,16 +478,11 @@ app.get(
 
       res.status(500).json({
         success: false,
-        message: "Could not get previous snapshot",
+        message: "Could not get previous snapshot"
       });
     }
   }
 );
-
-
-// ==============================
-// START SERVER
-// ==============================
 
 const server = app.listen(
   PORT,

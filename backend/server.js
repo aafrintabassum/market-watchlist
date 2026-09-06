@@ -1,10 +1,13 @@
+require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
+const bcrypt = require("bcryptjs");
 const pool = require("./db");
 
 const app = express();
 
-const PORT = process.env.PORT || 5000;
+app.use(express.json());
 
 const allowedOrigins = [
   "http://localhost:5173",
@@ -22,72 +25,89 @@ app.use(
   })
 );
 
-app.use(express.json());
-
 app.get("/", (req, res) => {
   res.json({
     success: true,
-    message: "Market Watchlist backend is running"
+    message: "Market Watchlist API is running"
   });
 });
 
-app.post("/api/auth/login", async (req, res) => {
+app.get("/health", async (req, res) => {
   try {
-    const name = String(req.body.name || "").trim();
+    await pool.query("SELECT 1");
 
-    if (!name) {
-      return res.status(400).json({
-        success: false,
-        message: "Name is required"
-      });
-    }
-
-    if (name.length < 2 || name.length > 100) {
-      return res.status(400).json({
-        success: false,
-        message: "Please enter a valid name"
-      });
-    }
-
-    const existingUser = await pool.query(
-      `
-      SELECT id, name
-      FROM users
-      WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
-      ORDER BY id ASC
-      LIMIT 1
-      `,
-      [name]
-    );
-
-    if (existingUser.rows.length > 0) {
-      return res.json({
-        success: true,
-        message: "Login successful",
-        user: existingUser.rows[0]
-      });
-    }
-
-    const createdUser = await pool.query(
-      `
-      INSERT INTO users (name)
-      VALUES ($1)
-      RETURNING id, name
-      `,
-      [name]
-    );
-
-    return res.status(201).json({
+    res.json({
       success: true,
-      message: "Account created",
-      user: createdUser.rows[0]
+      database: "connected"
+    });
+  } catch (error) {
+    console.error("HEALTH ERROR:", error);
+
+    res.status(500).json({
+      success: false,
+      database: "disconnected"
+    });
+  }
+});
+
+app.post("/api/login", async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Username and password are required"
+      });
+    }
+
+    const userResult = await pool.query(
+      "SELECT * FROM users WHERE username = $1",
+      [username]
+    );
+
+    let user;
+
+    if (userResult.rows.length === 0) {
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      const insertResult = await pool.query(
+        `INSERT INTO users (username, password)
+         VALUES ($1, $2)
+         RETURNING id, username`,
+        [username, hashedPassword]
+      );
+
+      user = insertResult.rows[0];
+    } else {
+      user = userResult.rows[0];
+
+      const validPassword = await bcrypt.compare(
+        password,
+        user.password
+      );
+
+      if (!validPassword) {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid username or password"
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: user.id,
+        username: user.username
+      }
     });
   } catch (error) {
     console.error("LOGIN ERROR:", error);
 
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
-      message: "Could not log in"
+      message: "Login failed"
     });
   }
 });
@@ -96,20 +116,11 @@ app.get("/api/watchlist/:userId", async (req, res) => {
   try {
     const userId = Number(req.params.userId);
 
-    if (!Number.isInteger(userId) || userId <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid user ID"
-      });
-    }
-
     const result = await pool.query(
-      `
-      SELECT id, user_id, symbol
-      FROM watchlist_items
-      WHERE user_id = $1
-      ORDER BY id ASC
-      `,
+      `SELECT *
+       FROM watchlist
+       WHERE user_id = $1
+       ORDER BY id DESC`,
       [userId]
     );
 
@@ -118,94 +129,68 @@ app.get("/api/watchlist/:userId", async (req, res) => {
       watchlist: result.rows
     });
   } catch (error) {
-    console.error("WATCHLIST FETCH ERROR:", error);
+    console.error("GET WATCHLIST ERROR:", error);
 
     res.status(500).json({
       success: false,
-      message: "Could not load watchlist"
+      message: "Could not fetch watchlist"
     });
   }
 });
 
-app.post("/api/watchlist/:userId", async (req, res) => {
+app.post("/api/watchlist", async (req, res) => {
   try {
-    const userId = Number(req.params.userId);
+    const {
+      user_id,
+      symbol,
+      company_name,
+      price,
+      change,
+      change_percent
+    } = req.body;
 
-    const symbol = String(req.body.symbol || "")
-      .trim()
-      .toUpperCase();
-
-    if (!Number.isInteger(userId) || userId <= 0) {
+    if (!user_id || !symbol) {
       return res.status(400).json({
         success: false,
-        message: "Invalid user ID"
-      });
-    }
-
-    if (!symbol) {
-      return res.status(400).json({
-        success: false,
-        message: "Stock symbol is required"
-      });
-    }
-
-    if (!/^[A-Z0-9.-]{1,20}$/.test(symbol)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid stock symbol"
-      });
-    }
-
-    const userResult = await pool.query(
-      `
-      SELECT id
-      FROM users
-      WHERE id = $1
-      LIMIT 1
-      `,
-      [userId]
-    );
-
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found"
+        message: "User ID and symbol are required"
       });
     }
 
     const existing = await pool.query(
-      `
-      SELECT id, user_id, symbol
-      FROM watchlist_items
-      WHERE user_id = $1
-      AND UPPER(symbol) = UPPER($2)
-      LIMIT 1
-      `,
-      [userId, symbol]
+      `SELECT *
+       FROM watchlist
+       WHERE user_id = $1 AND symbol = $2`,
+      [user_id, symbol]
     );
 
     if (existing.rows.length > 0) {
       return res.status(409).json({
         success: false,
-        message: `${symbol} is already in your watchlist`
+        message: "Stock already exists in watchlist"
       });
     }
 
     const result = await pool.query(
-      `
-      INSERT INTO watchlist_items (user_id, symbol)
-      VALUES ($1, $2)
-      RETURNING id, user_id, symbol
-      `,
-      [userId, symbol]
+      `INSERT INTO watchlist
+       (user_id, symbol, company_name, price, change, change_percent)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [
+        user_id,
+        symbol,
+        company_name || symbol,
+        price || 0,
+        change || 0,
+        change_percent || 0
+      ]
     );
 
-    res.status(201).json({
+    res.json({
       success: true,
-      watchlist: result.rows[0]
+      stock: result.rows[0]
     });
   } catch (error) {
-    console.error("ADD STOCK ERROR:", error);
+    console.error("ADD WATCHLIST ERROR:", error);
 
     res.status(500).json({
       success: false,
@@ -214,36 +199,52 @@ app.post("/api/watchlist/:userId", async (req, res) => {
   }
 });
 
-app.delete("/api/watchlist/:userId/:symbol", async (req, res) => {
+app.delete("/api/watchlist/:id", async (req, res) => {
   try {
-    const userId = Number(req.params.userId);
+    const id = Number(req.params.id);
 
-    const symbol = String(req.params.symbol || "")
-      .trim()
-      .toUpperCase();
+    await pool.query(
+      "DELETE FROM watchlist WHERE id = $1",
+      [id]
+    );
 
-    if (!Number.isInteger(userId) || userId <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid user ID"
-      });
-    }
+    res.json({
+      success: true,
+      message: "Stock removed"
+    });
+  } catch (error) {
+    console.error("DELETE WATCHLIST ERROR:", error);
 
-    if (!symbol) {
-      return res.status(400).json({
-        success: false,
-        message: "Stock symbol is required"
-      });
-    }
+    res.status(500).json({
+      success: false,
+      message: "Could not remove stock"
+    });
+  }
+});
+
+app.put("/api/watchlist/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    const {
+      price,
+      change,
+      change_percent
+    } = req.body;
 
     const result = await pool.query(
-      `
-      DELETE FROM watchlist_items
-      WHERE user_id = $1
-      AND UPPER(symbol) = UPPER($2)
-      RETURNING id, user_id, symbol
-      `,
-      [userId, symbol]
+      `UPDATE watchlist
+       SET price = $1,
+           change = $2,
+           change_percent = $3
+       WHERE id = $4
+       RETURNING *`,
+      [
+        price || 0,
+        change || 0,
+        change_percent || 0,
+        id
+      ]
     );
 
     if (result.rows.length === 0) {
@@ -255,14 +256,14 @@ app.delete("/api/watchlist/:userId/:symbol", async (req, res) => {
 
     res.json({
       success: true,
-      message: `${symbol} removed`
+      stock: result.rows[0]
     });
   } catch (error) {
-    console.error("REMOVE STOCK ERROR:", error);
+    console.error("UPDATE WATCHLIST ERROR:", error);
 
     res.status(500).json({
       success: false,
-      message: "Could not remove stock"
+      message: "Could not update stock"
     });
   }
 });
@@ -291,58 +292,91 @@ app.get("/api/market/:symbol", async (req, res) => {
       ? symbol
       : `${symbol}.NS`;
 
-    const url =
-      `https://query1.finance.yahoo.com/v8/finance/chart/` +
-      `${encodeURIComponent(yahooSymbol)}?range=2d&interval=1d`;
+    const encodedSymbol = encodeURIComponent(yahooSymbol);
 
-    const controller = new AbortController();
+    const period2 = Math.floor(Date.now() / 1000);
+    const period1 = period2 - 172800;
 
-    const timeout = setTimeout(() => {
-      controller.abort();
-    }, 10000);
+    const urls = [
+      `https://query2.finance.yahoo.com/v8/finance/chart/${encodedSymbol}?period1=${period1}&period2=${period2}&interval=1d&events=history&includeAdjustedClose=true`,
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodedSymbol}?period1=${period1}&period2=${period2}&interval=1d&events=history&includeAdjustedClose=true`
+    ];
 
-    let response;
+    const headers = {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+      "Accept": "application/json,text/plain,*/*",
+      "Accept-Language": "en-US,en;q=0.9",
+      "Referer": "https://finance.yahoo.com/"
+    };
 
-    try {
-      response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          "User-Agent": "Market-Watchlist/1.0"
+    let json = null;
+    let lastStatus = null;
+
+    for (const url of urls) {
+      try {
+        const controller = new AbortController();
+
+        const timeout = setTimeout(() => {
+          controller.abort();
+        }, 10000);
+
+        let response;
+
+        try {
+          response = await fetch(url, {
+            method: "GET",
+            headers,
+            signal: controller.signal
+          });
+        } finally {
+          clearTimeout(timeout);
         }
-      });
-    } finally {
-      clearTimeout(timeout);
+
+        lastStatus = response.status;
+
+        if (!response.ok) {
+          continue;
+        }
+
+        const data = await response.json();
+
+        if (data?.chart?.result?.[0]) {
+          json = data;
+          break;
+        }
+      } catch (error) {
+        console.error(
+          "Yahoo request failed:",
+          error.message
+        );
+      }
     }
 
-    if (!response.ok) {
-      return res.status(404).json({
+    if (!json) {
+      console.error(
+        `Yahoo Finance failed for ${yahooSymbol}. Last status: ${lastStatus}`
+      );
+
+      return res.status(503).json({
         success: false,
-        message: `Market data not found for ${symbol}`
+        message: `Yahoo Finance is temporarily unavailable for ${symbol}`
       });
     }
 
-    const json = await response.json();
-
-    const result = json?.chart?.result?.[0];
-
-    if (!result) {
-      return res.status(404).json({
-        success: false,
-        message: `No market data available for ${symbol}`
-      });
-    }
+    const result = json.chart.result[0];
 
     const meta = result.meta || {};
 
     const price = Number(
       meta.regularMarketPrice ??
-        meta.chartPreviousClose
+      meta.chartPreviousClose
     );
 
     const previousClose = Number(
       meta.previousClose ??
-        meta.chartPreviousClose ??
-        price
+      meta.chartPreviousClose ??
+      price
     );
 
     if (!Number.isFinite(price)) {
@@ -352,11 +386,20 @@ app.get("/api/market/:symbol", async (req, res) => {
       });
     }
 
+    const change = price - previousClose;
+
+    const changePercent =
+      previousClose !== 0
+        ? (change / previousClose) * 100
+        : 0;
+
     res.json({
       success: true,
       symbol,
       price,
       previousClose,
+      change,
+      changePercent,
       currency: meta.currency || "INR",
       exchange: meta.exchangeName || "NSE",
       marketState: meta.marketState || "UNKNOWN",
@@ -364,7 +407,10 @@ app.get("/api/market/:symbol", async (req, res) => {
       fetchedAt: new Date().toISOString()
     });
   } catch (error) {
-    console.error("MARKET DATA ERROR:", error);
+    console.error(
+      "MARKET DATA ERROR:",
+      error
+    );
 
     res.status(503).json({
       success: false,
@@ -373,138 +419,106 @@ app.get("/api/market/:symbol", async (req, res) => {
   }
 });
 
-app.post("/api/snapshots/:userId", async (req, res) => {
+app.get("/api/snapshots/:userId", async (req, res) => {
   try {
     const userId = Number(req.params.userId);
 
-    const symbol = String(req.body.symbol || "")
-      .trim()
-      .toUpperCase();
-
-    const price = Number(req.body.price);
-
-    const previousClose = Number(
-      req.body.previousClose
-    );
-
-    if (!Number.isInteger(userId) || userId <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid user ID"
-      });
-    }
-
-    if (!symbol || !Number.isFinite(price)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid snapshot data"
-      });
-    }
-
     const result = await pool.query(
-      `
-      INSERT INTO "market snapshot"
-        (user_id, symbol, price, previous_close)
-      VALUES
-        ($1, $2, $3, $4)
-      RETURNING *
-      `,
-      [
-        userId,
-        symbol,
-        price,
-        Number.isFinite(previousClose)
-          ? previousClose
-          : null
-      ]
+      `SELECT *
+       FROM snapshots
+       WHERE user_id = $1
+       ORDER BY created_at DESC`,
+      [userId]
     );
 
-    res.status(201).json({
+    res.json({
       success: true,
-      snapshot: result.rows[0]
+      snapshots: result.rows
     });
   } catch (error) {
-    console.error("SNAPSHOT SAVE ERROR:", error);
+    console.error("GET SNAPSHOTS ERROR:", error);
 
     res.status(500).json({
       success: false,
-      message: "Could not save market snapshot"
+      message: "Could not fetch snapshots"
     });
   }
 });
 
-app.get(
-  "/api/snapshots/:userId/:symbol/previous",
-  async (req, res) => {
-    try {
-      const userId = Number(req.params.userId);
+app.post("/api/snapshots", async (req, res) => {
+  try {
+    const {
+      user_id,
+      total_value,
+      total_change,
+      total_change_percent
+    } = req.body;
 
-      const symbol = String(req.params.symbol || "")
-        .trim()
-        .toUpperCase();
+    const result = await pool.query(
+      `INSERT INTO snapshots
+       (user_id, total_value, total_change, total_change_percent)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [
+        user_id,
+        total_value || 0,
+        total_change || 0,
+        total_change_percent || 0
+      ]
+    );
 
-      if (!Number.isInteger(userId) || userId <= 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid user ID"
-        });
-      }
+    res.json({
+      success: true,
+      snapshot: result.rows[0]
+    });
+  } catch (error) {
+    console.error("CREATE SNAPSHOT ERROR:", error);
 
-      const result = await pool.query(
-        `
-        SELECT *
-        FROM "market snapshot"
-        WHERE user_id = $1
-        AND UPPER(symbol) = UPPER($2)
-        ORDER BY id DESC
-        OFFSET 1
-        LIMIT 1
-        `,
-        [userId, symbol]
-      );
-
-      res.json({
-        success: true,
-        previous:
-          result.rows.length > 0
-            ? result.rows[0]
-            : null
-      });
-    } catch (error) {
-      console.error(
-        "PREVIOUS SNAPSHOT ERROR:",
-        error
-      );
-
-      res.status(500).json({
-        success: false,
-        message: "Could not get previous snapshot"
-      });
-    }
+    res.status(500).json({
+      success: false,
+      message: "Could not create snapshot"
+    });
   }
-);
+});
+
+app.delete("/api/snapshots/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+
+    await pool.query(
+      "DELETE FROM snapshots WHERE id = $1",
+      [id]
+    );
+
+    res.json({
+      success: true,
+      message: "Snapshot deleted"
+    });
+  } catch (error) {
+    console.error("DELETE SNAPSHOT ERROR:", error);
+
+    res.status(500).json({
+      success: false,
+      message: "Could not delete snapshot"
+    });
+  }
+});
+
+const PORT = process.env.PORT || 5000;
 
 const server = app.listen(
   PORT,
   "0.0.0.0",
   () => {
-    console.log("");
-    console.log("======================================");
-    console.log("Market Watchlist Backend");
-    console.log(`Running on port ${PORT}`);
-    console.log("======================================");
-    console.log("");
+    console.log(
+      `Server running on port ${PORT}`
+    );
   }
 );
 
 server.on("error", (error) => {
-  console.error("SERVER ERROR:", error);
-});
-
-process.on("uncaughtException", (error) => {
-  console.error("UNCAUGHT EXCEPTION:", error);
-});
-
-process.on("unhandledRejection", (error) => {
-  console.error("UNHANDLED REJECTION:", error);
+  console.error(
+    "SERVER ERROR:",
+    error
+  );
 });

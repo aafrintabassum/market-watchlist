@@ -5,8 +5,11 @@ const cors = require("cors");
 const pool = require("./db");
 
 const app = express();
-
 const PORT = process.env.PORT || 5000;
+
+/* =========================
+   CORS
+========================= */
 
 const allowedOrigins = [
   "http://localhost:5173",
@@ -20,11 +23,17 @@ if (process.env.FRONTEND_URL) {
 
 app.use(
   cors({
-    origin: allowedOrigins
+    origin: allowedOrigins,
+    methods: ["GET", "POST", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type"]
   })
 );
 
 app.use(express.json());
+
+/* =========================
+   DATABASE INITIALIZATION
+========================= */
 
 async function initDatabase() {
   try {
@@ -54,8 +63,13 @@ async function initDatabase() {
     console.log("DATABASE TABLES READY");
   } catch (error) {
     console.error("DATABASE INITIALIZATION ERROR:", error);
+    throw error;
   }
 }
+
+/* =========================
+   BASIC ROUTES
+========================= */
 
 app.get("/", (req, res) => {
   res.json({
@@ -75,7 +89,7 @@ app.get("/health", async (req, res) => {
   } catch (error) {
     console.error("HEALTH ERROR:", error);
 
-    res.status(500).json({
+    res.status(503).json({
       success: false,
       database: "disconnected"
     });
@@ -241,7 +255,7 @@ app.post("/api/watchlist/:userId", async (req, res) => {
       SELECT id, user_id, symbol
       FROM watchlist_items
       WHERE user_id = $1
-      AND UPPER(symbol) = UPPER($2)
+        AND UPPER(symbol) = UPPER($2)
       LIMIT 1
       `,
       [userId, symbol]
@@ -307,7 +321,7 @@ app.delete("/api/watchlist/:userId/:symbol", async (req, res) => {
       `
       DELETE FROM watchlist_items
       WHERE user_id = $1
-      AND UPPER(symbol) = UPPER($2)
+        AND UPPER(symbol) = UPPER($2)
       RETURNING id, user_id, symbol
       `,
       [userId, symbol]
@@ -335,7 +349,7 @@ app.delete("/api/watchlist/:userId/:symbol", async (req, res) => {
 });
 
 /* =========================
-   MARKET DATA
+   MARKET DATA - YAHOO FINANCE
 ========================= */
 
 app.get("/api/market/:symbol", async (req, res) => {
@@ -362,64 +376,144 @@ app.get("/api/market/:symbol", async (req, res) => {
       ? symbol
       : `${symbol}.NS`;
 
-    const url =
-      `https://query1.finance.yahoo.com/v8/finance/chart/` +
-      `${encodeURIComponent(yahooSymbol)}?range=2d&interval=1d`;
+    const now = Math.floor(Date.now() / 1000);
 
-    const controller = new AbortController();
+    const period1 = now - 7 * 24 * 60 * 60;
+    const period2 = now + 60 * 60;
 
-    const timeout = setTimeout(() => {
-      controller.abort();
-    }, 10000);
+    const urls = [
+      `https://query2.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+        yahooSymbol
+      )}?period1=${period1}&period2=${period2}&interval=1d&events=history`,
 
-    let response;
+      `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(
+        yahooSymbol
+      )}?period1=${period1}&period2=${period2}&interval=1d&events=history`
+    ];
 
-    try {
-      response = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          "User-Agent": "Market-Watchlist/1.0"
+    const headers = {
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      Accept: "application/json,text/plain,*/*",
+      "Accept-Language": "en-US,en;q=0.9",
+      Referer: "https://finance.yahoo.com/"
+    };
+
+    let yahooResult = null;
+    let lastStatus = null;
+    let lastYahooError = null;
+
+    for (const url of urls) {
+      const controller = new AbortController();
+
+      const timeout = setTimeout(() => {
+        controller.abort();
+      }, 15000);
+
+      try {
+        console.log(`YAHOO REQUEST: ${yahooSymbol}`);
+
+        const response = await fetch(url, {
+          method: "GET",
+          headers,
+          signal: controller.signal
+        });
+
+        lastStatus = response.status;
+
+        console.log(
+          `YAHOO RESPONSE: ${response.status} ${response.statusText}`
+        );
+
+        if (!response.ok) {
+          continue;
         }
-      });
-    } finally {
-      clearTimeout(timeout);
+
+        const json = await response.json();
+
+        if (json?.chart?.error) {
+          console.error(
+            "YAHOO CHART ERROR:",
+            JSON.stringify(json.chart.error)
+          );
+
+          lastYahooError = json.chart.error;
+          continue;
+        }
+
+        const result = json?.chart?.result?.[0];
+
+        if (!result) {
+          console.error(
+            `YAHOO EMPTY RESULT FOR ${yahooSymbol}`
+          );
+
+          continue;
+        }
+
+        yahooResult = result;
+        break;
+      } catch (error) {
+        lastYahooError = error;
+
+        console.error(
+          `YAHOO REQUEST ERROR FOR ${yahooSymbol}:`,
+          error.message
+        );
+      } finally {
+        clearTimeout(timeout);
+      }
     }
 
-    if (!response.ok) {
-      return res.status(404).json({
+    if (!yahooResult) {
+      console.error(
+        `YAHOO FAILED FOR ${yahooSymbol}. LAST STATUS: ${lastStatus}`,
+        lastYahooError?.message ||
+          lastYahooError?.description ||
+          ""
+      );
+
+      return res.status(503).json({
         success: false,
-        message: `Market data not found for ${symbol}`
+        message: `Yahoo Finance is temporarily unavailable for ${symbol}`
       });
     }
 
-    const json = await response.json();
+    const meta = yahooResult.meta || {};
 
-    const result = json?.chart?.result?.[0];
+    const quote =
+      yahooResult?.indicators?.quote?.[0] || {};
 
-    if (!result) {
-      return res.status(404).json({
-        success: false,
-        message: `No market data available for ${symbol}`
-      });
+    const closes = Array.isArray(quote.close)
+      ? quote.close
+          .map((value) => Number(value))
+          .filter((value) => Number.isFinite(value))
+      : [];
+
+    let price = Number(meta.regularMarketPrice);
+
+    if (!Number.isFinite(price) && closes.length > 0) {
+      price = closes[closes.length - 1];
     }
 
-    const meta = result.meta || {};
+    let previousClose = Number(meta.previousClose);
 
-    const price = Number(
-      meta.regularMarketPrice ??
-      meta.chartPreviousClose
-    );
+    if (!Number.isFinite(previousClose)) {
+      previousClose = Number(meta.chartPreviousClose);
+    }
 
-    const previousClose = Number(
-      meta.previousClose ??
-      meta.chartPreviousClose ??
-      price
-    );
+    if (!Number.isFinite(previousClose) && closes.length >= 2) {
+      previousClose = closes[closes.length - 2];
+    }
+
+    if (!Number.isFinite(previousClose)) {
+      previousClose = price;
+    }
 
     if (!Number.isFinite(price)) {
-      return res.status(404).json({
+      return res.status(503).json({
         success: false,
-        message: `Could not get price for ${symbol}`
+        message: `Could not determine the current price for ${symbol}`
       });
     }
 
@@ -438,7 +532,10 @@ app.get("/api/market/:symbol", async (req, res) => {
       change,
       changePercent,
       currency: meta.currency || "INR",
-      exchange: meta.exchangeName || "NSE",
+      exchange:
+        meta.exchangeName ||
+        meta.fullExchangeName ||
+        "NSE",
       marketState: meta.marketState || "UNKNOWN",
       source: "Yahoo Finance",
       fetchedAt: new Date().toISOString()
@@ -466,10 +563,7 @@ app.post("/api/snapshots/:userId", async (req, res) => {
       .toUpperCase();
 
     const price = Number(req.body.price);
-
-    const previousClose = Number(
-      req.body.previousClose
-    );
+    const previousClose = Number(req.body.previousClose);
 
     if (!Number.isInteger(userId) || userId <= 0) {
       return res.status(400).json({
@@ -478,10 +572,7 @@ app.post("/api/snapshots/:userId", async (req, res) => {
       });
     }
 
-    if (
-      !symbol ||
-      !Number.isFinite(price)
-    ) {
+    if (!symbol || !Number.isFinite(price)) {
       return res.status(400).json({
         success: false,
         message: "Invalid snapshot data"
@@ -553,7 +644,7 @@ app.get(
         SELECT *
         FROM "market snapshot"
         WHERE user_id = $1
-        AND UPPER(symbol) = UPPER($2)
+          AND UPPER(symbol) = UPPER($2)
         ORDER BY id DESC
         OFFSET 1
         LIMIT 1
@@ -569,10 +660,7 @@ app.get(
             : null
       });
     } catch (error) {
-      console.error(
-        "PREVIOUS SNAPSHOT ERROR:",
-        error
-      );
+      console.error("PREVIOUS SNAPSHOT ERROR:", error);
 
       return res.status(500).json({
         success: false,
@@ -582,28 +670,40 @@ app.get(
   }
 );
 
-initDatabase();
-
 /* =========================
    START SERVER
 ========================= */
 
-const server = app.listen(
-  PORT,
-  "0.0.0.0",
-  () => {
-    console.log("");
-    console.log("======================================");
-    console.log("Market Watchlist Backend");
-    console.log(`Running on port ${PORT}`);
-    console.log("======================================");
-    console.log("");
-  }
-);
+async function startServer() {
+  try {
+    await initDatabase();
 
-server.on("error", (error) => {
-  console.error("SERVER ERROR:", error);
-});
+    const server = app.listen(
+      PORT,
+      "0.0.0.0",
+      () => {
+        console.log("");
+        console.log("======================================");
+        console.log("Market Watchlist Backend");
+        console.log(`Running on port ${PORT}`);
+        console.log("Yahoo Finance integration enabled");
+        console.log("======================================");
+        console.log("");
+      }
+    );
+
+    server.on("error", (error) => {
+      console.error("SERVER ERROR:", error);
+    });
+  } catch (error) {
+    console.error("SERVER STARTUP FAILED:", error);
+    process.exit(1);
+  }
+}
+
+/* =========================
+   ERROR HANDLERS
+========================= */
 
 process.on("uncaughtException", (error) => {
   console.error("UNCAUGHT EXCEPTION:", error);
@@ -612,3 +712,9 @@ process.on("uncaughtException", (error) => {
 process.on("unhandledRejection", (error) => {
   console.error("UNHANDLED REJECTION:", error);
 });
+
+/* =========================
+   RUN SERVER
+========================= */
+
+startServer();

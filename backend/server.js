@@ -26,6 +26,37 @@ app.use(
 
 app.use(express.json());
 
+async function initDatabase() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE
+      );
+
+      CREATE TABLE IF NOT EXISTS watchlist_items (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        symbol TEXT NOT NULL,
+        UNIQUE(user_id, symbol)
+      );
+
+      CREATE TABLE IF NOT EXISTS "market snapshot" (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        symbol TEXT NOT NULL,
+        price NUMERIC,
+        previous_close NUMERIC,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    console.log("DATABASE TABLES READY");
+  } catch (error) {
+    console.error("DATABASE INITIALIZATION ERROR:", error);
+  }
+}
+
 app.get("/", (req, res) => {
   res.json({
     success: true,
@@ -550,6 +581,8 @@ app.get(
     }
   }
 );
+
+initDatabase();
 
 /* =========================
    START SERVER

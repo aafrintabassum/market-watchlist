@@ -57,7 +57,7 @@ function App() {
     setAuthLoading(true);
 
     try {
-      const response = await fetch(`${API}/api/login`, {
+      const response = await fetch(`${API}/api/auth/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json"

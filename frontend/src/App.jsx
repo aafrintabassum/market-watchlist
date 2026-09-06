@@ -17,6 +17,7 @@ function App() {
   const [authLoading, setAuthLoading] = useState(false);
   const [restoring, setRestoring] = useState(true);
 
+  // Restore session from localStorage on first load
   useEffect(() => {
     const saved = localStorage.getItem("watchlist_user");
 
@@ -108,6 +109,7 @@ function App() {
       setMarketData({});
       setPreviousData({});
 
+      // Fetch all symbols in parallel instead of one at a time
       await Promise.all(
         watchlist.map((item) => fetchMarketData(item.symbol, id))
       );
@@ -390,6 +392,8 @@ function App() {
     };
   }
 
+  // A stock only counts as "meaningfully changed" if it moved
+  // at least 2% since the user's last visit (see README).
   const changedStocks = stocks.filter((item) => {
     const change = getVisitChange(item.symbol);
 
@@ -409,6 +413,7 @@ function App() {
       getVisitChange(item.symbol)?.percentage < 0
   );
 
+  // Avoid flashing the login screen while we check localStorage
   if (restoring) {
     return (
       <div className="app">
